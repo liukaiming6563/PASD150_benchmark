@@ -6,8 +6,7 @@ from pathlib import Path
 import argparse
 
 # -----------------------------------------------------------------------------
-# 让 "from src...." 在 PyCharm 直接 Run/Debug 和 命令行两边都能稳定工作
-# 原理：把本文件所在目录（PASD_benchmark）加入 sys.path
+# 把本文件所在目录（PASD_benchmark）加入 sys.path
 # -----------------------------------------------------------------------------
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -72,10 +71,10 @@ def get_default_args() -> InferArgs:
     PyCharm 直接点 Run 时会走这里（不需要敲命令行）。
     你想切换数据集/输出目录，直接改这里即可。
     """
-    root = r"D:\study\project\Data\A1\augmented"
+    root = r"D:\study\project\Data\A1\augmented/"
     dataset = "BIPED"
     split = "test"
-    out_dir = r"D:\study\project\ImageDetection\PASD_benchmark\outputs\BIPED\canny\preds_test"
+    out_dir = r"D:\study\project\PASD150_benchmark\output/"
     return InferArgs(root=root, dataset=dataset, split=split, out_dir=out_dir, model="canny", device="cpu")
 
 
