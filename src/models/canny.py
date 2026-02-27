@@ -1,37 +1,42 @@
 # CREATED BY LKM AND BLESSED BY JMQ
 # coding=utf-8
+# =============================================================================
+# src/models/canny.py
+# =============================================================================
+#
+# Canny 基线（传统算法，不参与训练）
+#
+# 输入：
+#   img_chw: torch.float32 (3,H,W), [0,1]
+#
+# 输出：
+#   prob: torch.float32 (1,H,W), [0,1]
+#   - 这里把 Canny 的二值结果映射为 0/1 概率图，便于统一保存/对比。
+#
+# =============================================================================
+
 import numpy as np
-import torch
 import cv2
+import torch
 
-class CannyEdge:
-    """
-    Canny 是传统基线：
-    - 不训练
-    - 输入 RGB 图（我们用灰度）
-    - 输出二值边缘图（0/1），当作概率图保存
-    """
 
-    def __init__(self, low: int = 50, high: int = 150):
-        self.low = int(low)
-        self.high = int(high)
+class CannyEdgeDetector:
+    def __init__(self, low_threshold: int = 50, high_threshold: int = 150):
+        self.low = int(low_threshold)
+        self.high = int(high_threshold)
 
-    @torch.no_grad()
     def infer(self, img_chw: torch.Tensor) -> torch.Tensor:
         """
-        img_chw: (3,H,W) float [0,1]
-        return:  (1,H,W) float [0,1]
+        Args:
+            img_chw: (3,H,W) float32 in [0,1]
+        Returns:
+            (1,H,W) float32 in [0,1]
         """
-        # tensor -> uint8 RGB
-        img = (img_chw.detach().cpu().clamp(0, 1).numpy() * 255.0).astype(np.uint8)  # CHW
-        img = np.transpose(img, (1, 2, 0))  # HWC
+        img = img_chw.detach().cpu().float().clamp(0, 1).numpy()  # CHW
+        img_hwc = (np.transpose(img, (1, 2, 0)) * 255.0).astype(np.uint8)
 
-        # rgb -> gray
-        gray = cv2.cvtColor(img, cv2.COLOR_RGB2GRAY)
-
-        # canny
+        gray = cv2.cvtColor(img_hwc, cv2.COLOR_RGB2GRAY)
         edge = cv2.Canny(gray, self.low, self.high)  # 0/255
 
-        edge01 = (edge.astype(np.float32) / 255.0)[None, ...]  # (1,H,W)
-        return torch.from_numpy(edge01)
-
+        prob = (edge.astype(np.float32) / 255.0)[None, ...]  # (1,H,W)
+        return torch.from_numpy(prob)

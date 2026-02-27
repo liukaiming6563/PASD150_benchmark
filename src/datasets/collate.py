@@ -1,18 +1,24 @@
 # CREATED BY LKM AND BLESSED BY JMQ
 # coding=utf-8
+# =============================================================================
+# src/datasets/collate.py
+# =============================================================================
+#
+# pad_collate：
+#   解决 batch 内图片尺寸不同，torch 默认无法 stack 的问题。
+#
+# 输出：
+#   imgs  : (B,3,Hmax,Wmax) float32
+#   edges : (B,1,Hmax,Wmax) float32
+#   valid : (B,1,Hmax,Wmax) float32  真实区域=1，padding=0，用于 masked loss
+#   metas : list[dict]
+#
+# =============================================================================
+
 import torch
 
-def pad_collate(batch):
-    """
-    batch 内图片尺寸可能不同，无法直接 stack。
-    这里做 batch 内 padding，并额外返回 valid_mask（pad区域=0）。
 
-    返回：
-      imgs  : (B,3,Hmax,Wmax)
-      edges : (B,1,Hmax,Wmax)
-      valid : (B,1,Hmax,Wmax)  # 可用于 masked loss
-      metas : list[dict]
-    """
+def pad_collate(batch):
     imgs, edges, metas = zip(*batch)
 
     max_h = max(x.shape[1] for x in imgs)
