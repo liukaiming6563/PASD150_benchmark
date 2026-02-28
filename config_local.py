@@ -59,15 +59,15 @@ class Run:
 
     # 数据集名（必须对应 root 下的子文件夹名）
     # 例："PASD150_0", "BIPED", "BSDS500"
-    dataset: str = "PASD150_0"
+    dataset: str = "BIPED"
 
     # 训练/推理使用的 split
     # - train.py 会固定用 train + val（这里主要用于 infer.py 默认值）
     split: str = "test"
 
     # 模型名（必须在 src/models/registry.py 注册）
-    # 目前支持： "canny", "hed"
-    model: str = "hed"
+    # 目前支持： "canny", "hed", "rcf"
+    model: str = "rcf"
 
     # 随机种子：影响可复现性（shuffle、初始化等）
     seed: int = 0
@@ -137,7 +137,7 @@ class Infer:
     # 【论文展示风格】是否反相输出
     # True：白底黑边（你想要的）
     # False：黑底白边
-    invert: bool = True
+    invert: bool = False
 
     # 【论文展示风格】是否二值化
     # None：保存灰度概率图（0~255）

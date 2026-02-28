@@ -4,19 +4,16 @@
 # train.py
 # =============================================================================
 #
-# 训练入口脚本（PyCharm 直接 Run / 命令行都支持）
+# 训练入口（PyCharm Run 优先），所有默认参数统一来自 config_local.py
 #
-# 默认逻辑（推荐你日常使用）：
-#   - 直接 Run：读取 config_local.py 的配置
-#
-# 命令行覆盖逻辑（可选）：
-#   - 你可以用 --dataset/--model/--iters 等临时覆盖 config_local.py
-#
-# 训练流程：
+# 运行逻辑：
 #   1) set_seed
-#   2) 构建 train/val dataset + dataloader（支持变尺寸 pad_collate）
+#   2) 构建 train/val dataset + dataloader（pad_collate 支持变尺寸 batch）
 #   3) build_model（registry 统一管理）
-#   4) train_loop（step-based；定期验证；保存 best/last）
+#   4) train_loop（step-based；定期 val；保存 best/last）
+#
+# 注意：
+#   - checkpoint 命名包含 model/dataset/seed/step/val_loss，适合 cross-dataset 实验管理
 #
 # =============================================================================
 
@@ -32,7 +29,6 @@ THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
     sys.path.insert(0, str(THIS_DIR))
 
-import torch
 from torch.utils.data import DataLoader
 
 import config_local as cfg
@@ -45,12 +41,13 @@ from src.utils.seed import set_seed
 
 @dataclass
 class TrainArgs:
-    # 基本选择
+    # 路径与实验组合
     root: str
     dataset: str
     model: str
     device: str
     seed: int
+    out_dir: str
 
     # 训练超参
     iters: int
@@ -64,32 +61,27 @@ class TrainArgs:
     ds_weight: float
     pad_stride: int
 
-    # 输出目录（会自动拼接：out_root/dataset/model/seedX）
-    out_dir: str
 
-
-def _build_default_out_dir() -> str:
+def _build_default_out_dir(dataset: str, model: str, seed: int) -> str:
     """
-    根据 config_local.py 自动生成输出目录结构，避免你每次手写路径。
+    自动输出目录：
+        out_root/dataset/model/seedX
     """
-    return str(
-        Path(cfg.paths.out_root)
-        / cfg.run.dataset
-        / cfg.run.model
-        / f"seed{cfg.run.seed}"
-    )
+    return str(Path(cfg.paths.out_root) / dataset / model / f"seed{seed}")
 
 
 def get_default_args_from_config() -> TrainArgs:
     """
-    PyCharm 直接 Run 时使用：完全从 config_local.py 读取默认配置。
+    PyCharm 直接 Run 时的默认参数：全部来自 config_local.py
     """
+    out_dir = _build_default_out_dir(cfg.run.dataset, cfg.run.model, cfg.run.seed)
     return TrainArgs(
         root=cfg.paths.root,
         dataset=cfg.run.dataset,
         model=cfg.run.model,
         device=cfg.run.device,
         seed=cfg.run.seed,
+        out_dir=out_dir,
         iters=cfg.train.iters,
         batch=cfg.train.batch,
         num_workers=cfg.train.num_workers,
@@ -100,20 +92,20 @@ def get_default_args_from_config() -> TrainArgs:
         deep_supervision=cfg.train.deep_supervision,
         ds_weight=cfg.train.ds_weight,
         pad_stride=cfg.train.pad_stride,
-        out_dir=_build_default_out_dir(),
     )
 
 
 def get_parser() -> argparse.ArgumentParser:
     """
-    命令行覆盖参数：不想在 config_local.py 改的时候可以临时用。
+    命令行覆盖（可选）：临时改一次不污染 config_local.py
     """
     p = argparse.ArgumentParser()
     p.add_argument("--root", type=str, default=None)
     p.add_argument("--dataset", type=str, default=None)
-    p.add_argument("--model", type=str, default=None, choices=["hed"])  # 训练目前只针对深度模型
+    p.add_argument("--model", type=str, default=None, choices=["hed", "rcf"])
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--seed", type=int, default=None)
+    p.add_argument("--out_dir", type=str, default=None)
 
     p.add_argument("--iters", type=int, default=None)
     p.add_argument("--batch", type=int, default=None)
@@ -122,19 +114,17 @@ def get_parser() -> argparse.ArgumentParser:
     p.add_argument("--weight_decay", type=float, default=None)
     p.add_argument("--log_every", type=int, default=None)
     p.add_argument("--val_every", type=int, default=None)
+    p.add_argument("--pad_stride", type=int, default=None)
+
     p.add_argument("--deep_supervision", action="store_true")
     p.add_argument("--no_deep_supervision", action="store_true")
     p.add_argument("--ds_weight", type=float, default=None)
-    p.add_argument("--pad_stride", type=int, default=None)
-
-    p.add_argument("--out_dir", type=str, default=None)
     return p
 
 
 def merge_cli_over_config(args: TrainArgs, ns: argparse.Namespace) -> TrainArgs:
     """
-    将命令行参数（若提供）覆盖到默认 args 上。
-    这样你既能“统一管理”，也能“临时改一次不污染 config_local.py”。
+    CLI 覆盖：仅当用户显式传参时覆盖。
     """
     for k, v in vars(ns).items():
         if v is None:
@@ -144,30 +134,24 @@ def merge_cli_over_config(args: TrainArgs, ns: argparse.Namespace) -> TrainArgs:
         if hasattr(args, k):
             setattr(args, k, v)
 
-    # deep supervision 的开关需要单独处理
+    # deep supervision 开关单独处理
     if getattr(ns, "no_deep_supervision", False):
         args.deep_supervision = False
     elif getattr(ns, "deep_supervision", False):
         args.deep_supervision = True
 
-    # out_dir 如果没给，按（out_root/dataset/model/seed）自动拼接
+    # out_dir：若仍为空，自动生成
     if args.out_dir is None or str(args.out_dir).strip() == "":
-        args.out_dir = _build_default_out_dir()
+        args.out_dir = _build_default_out_dir(args.dataset, args.model, args.seed)
 
     return args
 
 
 def main(args: TrainArgs) -> None:
-    # -------------------------------------------------------------------------
-    # 0) 复现性：固定随机种子
-    # -------------------------------------------------------------------------
+    # 0) 固定随机种子
     set_seed(args.seed)
 
-    # -------------------------------------------------------------------------
-    # 1) Dataset / DataLoader
-    #    - train：shuffle=True
-    #    - val  ：batch=1 最稳（避免大量 padding 造成浪费）
-    # -------------------------------------------------------------------------
+    # 1) 构建 dataset / dataloader
     ds_train = PairedEdgeFolderDataset(args.root, args.dataset, "train")
     ds_val = PairedEdgeFolderDataset(args.root, args.dataset, "val")
 
@@ -191,15 +175,10 @@ def main(args: TrainArgs) -> None:
         drop_last=False,
     )
 
-    # -------------------------------------------------------------------------
-    # 2) Build model
-    #    - hed：torch.nn.Module
-    # -------------------------------------------------------------------------
+    # 2) build model
     model = build_model(name=args.model)
 
-    # -------------------------------------------------------------------------
-    # 3) 训练主循环（step-based）
-    # -------------------------------------------------------------------------
+    # 3) train loop（把 exp_* 信息传入，用于 ckpt 自描述命名）
     train_loop(
         model=model,
         dl_train=dl_train,
@@ -209,6 +188,9 @@ def main(args: TrainArgs) -> None:
         lr=args.lr,
         weight_decay=args.weight_decay,
         iters=args.iters,
+        exp_model_name=args.model,
+        exp_train_dataset=args.dataset,
+        exp_seed=args.seed,
         log_every=args.log_every,
         val_every=args.val_every,
         pad_stride=args.pad_stride,

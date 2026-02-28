@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from src.models.canny import CannyEdgeDetector
 from src.models.hed import HEDWrapper
+from src.models.rcf import RCFWrapper
 
 
 def build_model(name: str, **kwargs):
@@ -36,5 +37,8 @@ def build_model(name: str, **kwargs):
         # HED：使用 torchvision 的 VGG16 backbone
         # pretrained=True：自动下载/缓存 ImageNet 权重（你已验证可用）
         return HEDWrapper(pretrained=True, return_sides_in_train=True)
+
+    elif name == "rcf":
+        return RCFWrapper(pretrained=True, return_sides_in_train=True)
 
     raise ValueError(f"Unknown model name: {name}")

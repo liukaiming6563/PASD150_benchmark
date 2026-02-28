@@ -4,15 +4,17 @@
 # infer.py
 # =============================================================================
 #
-# 推理入口脚本（PyCharm 直接 Run / 命令行都支持）
+# 推理入口（PyCharm Run 优先），默认从 config_local.py 读参数。
 #
-# 默认（推荐）：
-#   - 直接 Run：读取 config_local.py
-#   - 输出目录自动拼接到：out_root/dataset/model/seedX/preds
-#
-# 输出风格（论文展示）：
-#   - invert=True  => 白底黑边
-#   - threshold=0.3~0.5 => 更“干净”的二值边缘
+# 关键特性：
+#   ✅ 统一输出目录：out_root/dataset/model/seedX/preds
+#   ✅ 论文展示输出：invert=True => 白底黑边；threshold 可二值化
+#   ✅ 自动寻找 checkpoint（用于 cross-dataset 推理非常方便）：
+#       1) checkpoints/best.pt
+#       2) checkpoints/best__*.pt 里“最新的一个”（按文件修改时间）
+#       3) checkpoints/last.pt
+#       4) checkpoints/last__*.pt 里“最新的一个”
+#       都没有则不加载（用当前权重推理）
 #
 # =============================================================================
 
@@ -22,7 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # -----------------------------------------------------------------------------
-# 保证 from src... 在 PyCharm 和 命令行都工作
+# 让 from src... 在 PyCharm 和 命令行都工作
 # -----------------------------------------------------------------------------
 THIS_DIR = Path(__file__).resolve().parent
 if str(THIS_DIR) not in sys.path:
@@ -40,70 +42,109 @@ from src.engine.infer_engine import infer_and_save
 
 @dataclass
 class InferArgs:
+    # 数据相关
     root: str
     dataset: str
     split: str
+
+    # 输出相关
     out_dir: str
 
+    # 模型与设备
     model: str
     device: str
 
+    # loader
     batch: int
     num_workers: int
     pad_stride: int
 
-    # 论文展示输出风格
+    # 输出风格（论文展示）
     invert: bool
     threshold: float | None
 
-    # Canny 参数
+    # canny 参数
     canny_low: int
     canny_high: int
 
-    # 可选：深度模型 ckpt（不填则不加载）
+    # 可选：手动指定 ckpt 路径（如果不指定就自动找 best/last）
     ckpt_path: str | None = None
 
 
-def _build_default_out_dir() -> str:
+def _build_default_out_dir(dataset: str, model: str, seed: int) -> str:
     """
-    自动拼接推理输出目录：out_root/dataset/model/seedX/preds
+    out_root/dataset/model/seedX/preds
     """
-    return str(
-        Path(cfg.paths.out_root)
-        / cfg.run.dataset
-        / cfg.run.model
-        / f"seed{cfg.run.seed}"
-        / "preds"
-    )
+    return str(Path(cfg.paths.out_root) / dataset / model / f"seed{seed}" / "preds")
 
 
-def _build_default_ckpt_path() -> str:
+def _default_ckpt_dir(train_dataset: str, model: str, seed: int) -> Path:
     """
-    自动拼接 best checkpoint 路径：
-      out_root/dataset/model/seedX/checkpoints/best.pt
+    注意：推理时你可能想用“某个训练数据集”的权重去推“另一个测试数据集”。
+    这里的 ckpt_dir 默认来自 config_local 的 run.dataset/run.model/run.seed，
+    你后续做 cross-dataset 时可以在 CLI 里用 --ckpt_path 直接指定别的训练权重。
     """
-    return str(
-        Path(cfg.paths.out_root)
-        / cfg.run.dataset
-        / cfg.run.model
-        / f"seed{cfg.run.seed}"
-        / "checkpoints"
-        / "best.pt"
-    )
+    return Path(cfg.paths.out_root) / train_dataset / model / f"seed{seed}" / "checkpoints"
+
+
+def _pick_latest(glob_list: list[Path]) -> Path | None:
+    """
+    从候选文件中选出“最新修改”的那个。
+    """
+    if not glob_list:
+        return None
+    return max(glob_list, key=lambda p: p.stat().st_mtime)
+
+
+def auto_find_ckpt(train_dataset: str, model: str, seed: int) -> str | None:
+    """
+    自动寻找 checkpoint 的策略（按优先级）：
+      1) best.pt
+      2) best__*.pt 的最新一个
+      3) last.pt
+      4) last__*.pt 的最新一个
+    """
+    ckpt_dir = _default_ckpt_dir(train_dataset, model, seed)
+    if not ckpt_dir.exists():
+        return None
+
+    best_alias = ckpt_dir / "best.pt"
+    if best_alias.exists():
+        return str(best_alias)
+
+    best_candidates = list(ckpt_dir.glob("best__*.pt"))
+    best_latest = _pick_latest(best_candidates)
+    if best_latest is not None:
+        return str(best_latest)
+
+    last_alias = ckpt_dir / "last.pt"
+    if last_alias.exists():
+        return str(last_alias)
+
+    last_candidates = list(ckpt_dir.glob("last__*.pt"))
+    last_latest = _pick_latest(last_candidates)
+    if last_latest is not None:
+        return str(last_latest)
+
+    return None
 
 
 def get_default_args_from_config() -> InferArgs:
     """
-    PyCharm 直接 Run 时使用：完全从 config_local.py 读取默认配置。
+    PyCharm 直接 Run：默认读取 config_local.py
     """
-    # 默认推理时，如果是深度模型（hed），我们倾向加载 best.pt（若存在）
-    ckpt = _build_default_ckpt_path() if cfg.run.model in ("hed",) else None
+    out_dir = _build_default_out_dir(cfg.run.dataset, cfg.run.model, cfg.run.seed)
+
+    # 默认 ckpt：如果是深度模型，则自动找本实验（run.dataset/run.model/run.seed）下的 best/last
+    ckpt_path = None
+    if cfg.run.model in ("hed",):
+        ckpt_path = auto_find_ckpt(cfg.run.dataset, cfg.run.model, cfg.run.seed)
 
     return InferArgs(
         root=cfg.paths.root,
         dataset=cfg.run.dataset,
         split=cfg.run.split,
-        out_dir=_build_default_out_dir(),
+        out_dir=out_dir,
         model=cfg.run.model,
         device=cfg.run.device,
         batch=cfg.infer.batch,
@@ -113,7 +154,7 @@ def get_default_args_from_config() -> InferArgs:
         threshold=cfg.infer.threshold,
         canny_low=cfg.canny.low,
         canny_high=cfg.canny.high,
-        ckpt_path=ckpt,
+        ckpt_path=ckpt_path,
     )
 
 
@@ -124,7 +165,7 @@ def get_parser() -> argparse.ArgumentParser:
     p.add_argument("--split", type=str, default=None, choices=["train", "val", "test"])
     p.add_argument("--out_dir", type=str, default=None)
 
-    p.add_argument("--model", type=str, default=None, choices=["canny", "hed"])
+    p.add_argument("--model", type=str, default=None, choices=["canny","hed","rcf"])
     p.add_argument("--device", type=str, default=None)
 
     p.add_argument("--batch", type=int, default=None)
@@ -138,11 +179,15 @@ def get_parser() -> argparse.ArgumentParser:
     p.add_argument("--canny_low", type=int, default=None)
     p.add_argument("--canny_high", type=int, default=None)
 
+    # cross-dataset 推理时，最常用的就是显式指定训练权重
     p.add_argument("--ckpt_path", type=str, default=None)
     return p
 
 
 def merge_cli_over_config(args: InferArgs, ns: argparse.Namespace) -> InferArgs:
+    """
+    CLI 覆盖：仅当用户显式传参时覆盖。
+    """
     for k, v in vars(ns).items():
         if v is None:
             continue
@@ -156,15 +201,37 @@ def merge_cli_over_config(args: InferArgs, ns: argparse.Namespace) -> InferArgs:
     elif getattr(ns, "invert", False):
         args.invert = True
 
-    # 如果 out_dir 未指定，保持默认拼接
+    # out_dir：若仍为空，自动生成
     if args.out_dir is None or str(args.out_dir).strip() == "":
-        args.out_dir = _build_default_out_dir()
+        args.out_dir = _build_default_out_dir(cfg.run.dataset, cfg.run.model, cfg.run.seed)
 
     return args
 
 
+def load_ckpt_if_needed(model, ckpt_path: str | None) -> None:
+    """
+    如果 model 是 torch 模型并且 ckpt_path 存在，则加载权重。
+    """
+    if not isinstance(model, torch.nn.Module):
+        return
+    if ckpt_path is None:
+        print("[infer] no ckpt provided, will run with current weights.")
+        return
+
+    p = Path(ckpt_path)
+    if not p.exists():
+        print(f"[infer][warn] ckpt not found: {p} (will run with current weights)")
+        return
+
+    ckpt = torch.load(str(p), map_location="cpu")
+    # 兼容 {"model": state_dict} 或直接 state_dict
+    state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
+    model.load_state_dict(state, strict=True)
+    print(f"[infer] loaded ckpt: {p}")
+
+
 def main(args: InferArgs) -> None:
-    # 1) Dataset / DataLoader
+    # 1) dataset / dataloader
     ds = PairedEdgeFolderDataset(args.root, args.dataset, args.split)
     dl = DataLoader(
         ds,
@@ -176,26 +243,17 @@ def main(args: InferArgs) -> None:
         drop_last=False,
     )
 
-    # 2) Build model
+    # 2) build model
     model = build_model(
         name=args.model,
         canny_low=args.canny_low,
         canny_high=args.canny_high,
     )
 
-    # 3) 如果是 torch 模型且提供 ckpt，则加载
-    if isinstance(model, torch.nn.Module) and args.ckpt_path is not None:
-        ckpt_path = Path(args.ckpt_path)
-        if ckpt_path.exists():
-            ckpt = torch.load(str(ckpt_path), map_location="cpu")
-            # 兼容你 trainer 保存格式：{"model": state_dict}
-            state = ckpt["model"] if isinstance(ckpt, dict) and "model" in ckpt else ckpt
-            model.load_state_dict(state, strict=True)
-            print(f"[infer] loaded ckpt: {ckpt_path}")
-        else:
-            print(f"[infer][warn] ckpt not found, will run with current weights: {ckpt_path}")
+    # 3) load ckpt (if torch model)
+    load_ckpt_if_needed(model, args.ckpt_path)
 
-    # 4) 推理并保存（输出白底黑边由 invert 控制）
+    # 4) infer and save
     infer_and_save(
         model=model,
         loader=dl,
