@@ -137,7 +137,8 @@ def get_default_args_from_config() -> InferArgs:
 
     # 默认 ckpt：如果是深度模型，则自动找本实验（run.dataset/run.model/run.seed）下的 best/last
     ckpt_path = None
-    if cfg.run.model in ("hed",):
+    DEEP_MODELS = ("hed", "rcf", "bdcn", "pidinet", "teed")
+    if cfg.run.model in DEEP_MODELS:
         ckpt_path = auto_find_ckpt(cfg.run.dataset, cfg.run.model, cfg.run.seed)
 
     return InferArgs(
@@ -165,7 +166,7 @@ def get_parser() -> argparse.ArgumentParser:
     p.add_argument("--split", type=str, default=None, choices=["train", "val", "test"])
     p.add_argument("--out_dir", type=str, default=None)
 
-    p.add_argument("--model", type=str, default=None, choices=["canny","hed","rcf"])
+    p.add_argument("--model", type=str, default=None, choices=["canny","hed","rcf", "bdcn", "pidinet"])
     p.add_argument("--device", type=str, default=None)
 
     p.add_argument("--batch", type=int, default=None)

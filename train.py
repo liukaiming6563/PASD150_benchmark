@@ -102,7 +102,7 @@ def get_parser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser()
     p.add_argument("--root", type=str, default=None)
     p.add_argument("--dataset", type=str, default=None)
-    p.add_argument("--model", type=str, default=None, choices=["hed", "rcf"])
+    p.add_argument("--model", type=str, default=None, choices=["hed", "rcf", "bdcn", "pidinet"])
     p.add_argument("--device", type=str, default=None)
     p.add_argument("--seed", type=int, default=None)
     p.add_argument("--out_dir", type=str, default=None)

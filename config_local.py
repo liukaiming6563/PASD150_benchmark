@@ -59,15 +59,15 @@ class Run:
 
     # 数据集名（必须对应 root 下的子文件夹名）
     # 例："PASD150_0", "BIPED", "BSDS500"
-    dataset: str = "BIPED"
+    dataset: str = "PASD150_0"
 
     # 训练/推理使用的 split
     # - train.py 会固定用 train + val（这里主要用于 infer.py 默认值）
     split: str = "test"
 
     # 模型名（必须在 src/models/registry.py 注册）
-    # 目前支持： "canny", "hed", "rcf"
-    model: str = "rcf"
+    # 目前支持： "canny", "hed", "rcf", "bdcn"
+    model: str = "pidinet"
 
     # 随机种子：影响可复现性（shuffle、初始化等）
     seed: int = 0
