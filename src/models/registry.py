@@ -19,7 +19,7 @@ from src.models.hed import HEDWrapper
 from src.models.rcf import RCFWrapper
 from src.models.bdcn import BDCNWrapper
 from src.models.pidinet import PiDiNetWrapper
-# from src.models.teed import TEEDWrapper
+from src.models.teed import TEEDWrapper
 
 
 def build_model(name: str, **kwargs):
@@ -49,5 +49,8 @@ def build_model(name: str, **kwargs):
 
     elif name == "pidinet":
         return PiDiNetWrapper(return_sides_in_train=True)
+
+    elif name == "teed":
+        return TEEDWrapper(return_sides_in_train=True)
 
     raise ValueError(f"Unknown model name: {name}")
